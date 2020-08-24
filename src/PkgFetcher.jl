@@ -18,17 +18,39 @@ abstract type Source end
 
 const Resources = Dict{Resource,<:AbstractVector{<:Source}}
 
+struct Tarball <: Source
+    url::String
+end
+
+struct Patch <: Source
+    url::String
+    old::String
+end
+
+struct GitRepo <: Source
+    url::String
+    get::Bool
+end
+
+fetch(resources::Resources) = fetch(Multi(), resources)
+
 function fetch(curl::Multi, resources::Resources)
     @sync for (resource, sources) in resources
         @async for source in sources
-            while !fetch(curl, resource, source) end
+            fetch(curl, resource, source) || continue
+            if !isfile(resource.dest)
+                @error "no download found" resource source
+                continue
+            end
+            hash = Tar.tree_hash(`gzcat $(resource.dest)`)
+            if hash != resource.hash
+                @warn "hash mismatch" resource source hash
+                rm(resource.dest, force=true)
+                continue
+            end
+            break # success!
         end
     end
-end
-fetch(resources::Resources) = fetch(Multi(), resources)
-
-struct Tarball <: Source
-    url::String
 end
 
 function fetch(curl::Multi, resource::Resource, source::Tarball)
@@ -50,14 +72,16 @@ function fetch(curl::Multi, resource::Resource, source::Tarball)
     return true
 end
 
-struct Patch <: Source
-    url::String
-    old::String
-end
+function fetch(curl::Multi, resource::Resource, source::Patch)
+    old_tar = tempname()
+    skeleton = "$(source.old).skel"
+    if isfile(skeleton)
+        Tar.create(source.old, old_tar, skeleton=skeleton)
+    else
+        # no skeleton: assume everything is in the tarball
+        Tar.create(source.old, old_tar)
+    end
 
-struct GitRepo <: Source
-    url::String
-    get::Bool
 end
 
 end # module
