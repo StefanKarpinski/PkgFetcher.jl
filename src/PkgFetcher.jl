@@ -9,7 +9,7 @@ using Gzip_jll: gzip_path
 using zrl_jll: zrle_path, zrld_path
 
 const gzip = `$gzip_path`
-const zcat = `$gzip_path -c -d`
+const gzcat = `$gzip_path -c -d`
 const zrle = `$zrle_path`
 const zrld = `$zrld_path`
 
@@ -70,11 +70,14 @@ function fetch(curl::Multi, resources::Resources)
             hash = Tar.tree_hash(`$zcat $tarball`)
             if hash != resource.hash
                 @warn "hash mismatch" resource source hash
-                rm(resource.path, force=true)
+                rm(tarball, force=true)
                 continue
             end
             skeleton = skeleton_file(resource.path)
+            chmod(resource.path, 0o700, recursive=true)
+            rm(resource.path, force=true, recursive=true)
             Tar.extract(`$zcat $tarball`, resource.path; skeleton)
+            # mv(tarball, resource.path)
             break # success!
         end
     end
