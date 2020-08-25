@@ -5,6 +5,34 @@ using BSDiff
 using Downloader
 using Downloader.Curl: Multi
 
+using Gzip_jll: gzip_path
+using zrl_jll: zrle_path, zrld_path
+
+const gzip = `$gzip_path`
+const zcat = `$gzip_path -c -d`
+const zrle = `$zrle_path`
+const zrld = `$zrld_path`
+
+function download(curl::Multi, url::String)
+    path, io = mktemp()
+    # TODO: add various Pkg headers
+    request = Request(io, url, Pair{String,String}[])
+    try
+        response = Downloader.get(request, curl) # TODO: hook up progress
+        response.status == 200 ||
+            error("HTTP $(response.status) response")
+    catch error
+        @warn "download error" url error
+        close(io)
+        rm(path, force=true)
+        return
+    end
+    close(io)
+    return path
+end
+
+skeleton_file(path::AbstractString) = "$path.skel"
+
 struct Resource
     hash::String
     path::String
@@ -37,64 +65,52 @@ fetch(resources::Resources) = fetch(Multi(), resources)
 function fetch(curl::Multi, resources::Resources)
     @sync for (resource, sources) in resources
         @async for source in sources
-            fetch(curl, resource, source) || continue
-            if !isfile(resource.path)
-                @error "no download found" resource source
-                continue
-            end
-            hash = Tar.tree_hash(`gzcat $(resource.path)`)
+            tarball = fetch(curl, source)
+            tarball === nothing && continue
+            hash = Tar.tree_hash(`$zcat $tarball`)
             if hash != resource.hash
                 @warn "hash mismatch" resource source hash
                 rm(resource.path, force=true)
                 continue
             end
+            skeleton = skeleton_file(resource.path)
+            Tar.extract(`$zcat $tarball`, resource.path; skeleton)
             break # success!
         end
     end
 end
 
-function fetch(curl::Multi, resource::Resource, source::Tarball)
-    download(curl, source.url, resource.path)
-end
+fetch(curl::Multi, source::Tarball) = download(curl, source.url)
 
-function fetch(curl::Multi, resource::Resource, source::Patch)
-    old_tar = tempname()
-    skeleton = "$(source.old).skel"
-    if isfile(skeleton)
-        Tar.create(source.old, old_tar, skeleton=skeleton)
-    else
-        # no skeleton: assume everything goes in the tarball
-        # might fail or give wrong data, but we'll catch it
-        Tar.create(source.old, old_tar)
-    end
-    patch = tempname()
-    download(curl, source.url, patch) || return false
-    output = pipeline(`gzip`, resource.path)
-    try bspatch(old_tar, output, patch)
-    catch error
-        @warn "could not apply patch" error
-        return false
-    end
-    return true
-end
-
-function download(curl::Multi, url::String, path::AbstractString)
-    io = open(path, write=true)
+function fetch(curl::Multi, source::Patch)
+    patch = download(curl, source.url)
+    patch === nothing && return
     try
-        # TODO: inject various Pkg headers
-        request = Request(io, url, Pair{String,String}[])
-        response = Downloader.get(request, curl) # TODO: hook up progress
-        if response.status != 200
-            @warn "download failed" url response.status
-            return false
+        mktemp() do old_tarball, old_tar
+            skeleton = skeleton_file(source.old)
+            if isfile(skeleton)
+                Tar.create(source.old, old_tar; skeleton)
+            else
+                # no skeleton: assume everything goes in the tarball
+                # might fail or give wrong data, but we'll catch it
+                Tar.create(source.old, old_tar)
+            end
+            close(old_tar)
+            new_tarball = tempname()
+            old_tar_zrl = `$zrle $old_tarball`
+            new_tar_zrl = pipeline(zrld, gzip, new_tarball)
+            try
+                bspatch(old_tar_zrl, new_tar_zrl, patch)
+            catch error
+                @warn "could not apply patch" error
+                rm(new_tarball, force=true)
+                return
+            end
+            new_tarball
         end
-    catch error
-        @warn "download error" url error
-        close(io)
-        rm(path, force=true)
-        return false
+    finally
+        rm(patch, force=true)
     end
-    return true
 end
 
 end # module
