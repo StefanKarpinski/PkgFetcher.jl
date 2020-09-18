@@ -1,7 +1,6 @@
 module PkgFetcher
 
 using Tar
-using BSDiff
 using Downloads
 using Downloads.Curl: Multi
 
@@ -12,6 +11,9 @@ const gzip = `$gzip_path`
 const gzcat = `$gzip_path -c -d`
 const zrle = `$zrle_path`
 const zrld = `$zrld_path`
+
+include("BSPatch.jl")
+using .BSPatch
 
 function download(curl::Multi, url::String)
     path, io = mktemp()
