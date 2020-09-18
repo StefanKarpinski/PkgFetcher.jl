@@ -118,4 +118,17 @@ function fetch(curl::Multi, source::Patch)
     end
 end
 
+const SYSTEM_GIT = Ref{Union{Nothing,Bool}}(nothing)
+
+function system_git()
+    SYSTEM_GIT[] isa Bool && return SYSTEM_GIT[]
+    SYSTEM_GIT[] = Sys.which("git") !== nothing
+end
+
+function fetch(curl::Multi, source::GitRepo)
+    if system_git()
+    else # use LibGit2 instead
+    end
+end
+
 end # module
