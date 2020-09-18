@@ -2,8 +2,8 @@ module PkgFetcher
 
 using Tar
 using BSDiff
-using Downloader
-using Downloader.Curl: Multi
+using Downloads
+using Downloads.Curl: Multi
 
 using Gzip_jll: gzip_path
 using zrl_jll: zrle_path, zrld_path
